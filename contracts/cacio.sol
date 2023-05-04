@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.3;
 
-
 interface IERC20 {
-
     function totalSupply() external view returns (uint256);
 
     /**
@@ -548,7 +546,6 @@ library Address {
     }
 }
 
-
 abstract contract Ownable is Context {
     address private _owner;
 
@@ -932,15 +929,15 @@ interface IUniswapV2Router02 is IUniswapV2Router01 {
     ) external;
 }
 
-contract Cacio is Context, IERC20, Ownable {
+contract TEST is Context, IERC20, Ownable {
     using SafeMath for uint256;
     using Address for address;
 
     uint8 private _decimals = 9;
-    
-    string private _name = "Cacio";
-    string private _symbol = "KCO";
-    uint256 private _tTotal = 100000000 * 10 ** 9 * 10 ** uint256(_decimals);
+
+    string private _name = "Cepepe";
+    string private _symbol = "CEPEPE";
+    uint256 private _tTotal = 100 * 10 ** 9 * 10 ** uint256(_decimals);
 
     // % to holders
     uint256 public defaultTaxFee = 1;
@@ -956,12 +953,12 @@ contract Cacio is Context, IERC20, Ownable {
     bool public feesOnSellersAndBuyers = true;
 
     uint256 public _maxTxAmount = _tTotal.div(1).div(100);
-    uint256 public _maxWalletAmount = _tTotal.div(2).div(100);
-    uint256 public numTokensToExchangeForMarketing = _tTotal.div(100).div(100);
-    uint256 public numTokensToExchangeForLiquidity = _tTotal.div(100).div(100);
+    uint256 public _maxWalletAmount = _tTotal.div(1).div(50);
+    uint256 public numTokensToExchangeForMarketing = _tTotal.div(50).div(100);
+    uint256 public numTokensToExchangeForLiquidity = _tTotal.div(50).div(100);
 
     address payable public marketingWallet =
-        payable(0xdb10247585fe1a9c721C6fc51b2Ce5EA1a06599c);
+        payable(0xd13a1EacaCf160012fBd572F7829051765b7a702);
 
     mapping(address => uint256) public _rOwned; // reflections
     mapping(address => uint256) public _tOwned; // no reflections
@@ -983,6 +980,9 @@ contract Cacio is Context, IERC20, Ownable {
 
     bool inSwapAndSend;
     bool public SwapAndSendEnabled = true;
+    bool tradingEnabled;
+    uint256 public tradingStartTime;
+    uint256 public botsCaught;
 
     event SwapAndSendEnabledUpdated(bool enabled);
 
@@ -1011,6 +1011,7 @@ contract Cacio is Context, IERC20, Ownable {
         _isExcludedFromFee[address(this)] = true;
         _isExcludedFromMaxWallet[owner()] = true;
         _isExcludedFromMaxWallet[uniswapV2Pair] = true;
+        _isExcludedFromMaxWallet[address(this)] = true;
 
         emit Transfer(address(0), _msgSender(), _tTotal);
     }
@@ -1307,21 +1308,28 @@ contract Cacio is Context, IERC20, Ownable {
             !_isBlacklisted[from] && !_isBlacklisted[to],
             "This address is blacklisted"
         );
-
-        if (from != owner() && to != owner())
+        if (!tradingEnabled) {
+            require(
+                from == owner() || to == uniswapV2Pair,
+                "Trading not allowed yet"
+            );
+        }
+        // Max tx
+        if (to != owner() && from != owner())
             require(
                 amount <= _maxTxAmount,
                 "Transfer amount exceeds the maxTxAmount."
             );
         // Max wallet on buys
-        if (from == uniswapV2Pair) {
-            require(balanceOf(to) <= _maxWalletAmount, "Max wallet active");
+        if (from == uniswapV2Pair && !_isExcludedFromMaxWallet[to]) {
+            require(
+                balanceOf(to) + amount <= _maxWalletAmount,
+                "Max wallet active"
+            );
         }
         // Max wallet on P2P
         if (to != uniswapV2Pair && from != uniswapV2Pair) {
-            if (
-                !_isExcludedFromMaxWallet[from] || !_isExcludedFromMaxWallet[to]
-            ) {
+            if (!_isExcludedFromMaxWallet[to]) {
                 require(
                     balanceOf(to) + amount <= _maxWalletAmount,
                     "Max wallet active"
@@ -1334,11 +1342,12 @@ contract Cacio is Context, IERC20, Ownable {
         // also, don't get caught in a circular sending event.
         // also, don't swap & liquify if sender is uniswap pair.
         uint256 contractTokenBalance = balanceOf(address(this));
-        bool overMinTokenBalance = contractTokenBalance >=
-            numTokensToExchangeForMarketing + numTokensToExchangeForLiquidity;
+        uint256 totalFee = numTokensToExchangeForMarketing +
+            numTokensToExchangeForLiquidity;
+        bool overMinTokenBalance = contractTokenBalance >= totalFee;
 
-        if (contractTokenBalance >= _maxTxAmount) {
-            contractTokenBalance = _maxTxAmount;
+        if (contractTokenBalance >= totalFee) {
+            contractTokenBalance = totalFee;
         }
 
         if (
@@ -1363,11 +1372,17 @@ contract Cacio is Context, IERC20, Ownable {
         }
 
         _tokenTransfer(from, to, amount, takeFee);
+
+        if (tradingStartTime + 5 > block.number) {
+            _isBlacklisted[to] = true;
+            botsCaught += 1;
+        }
     }
 
     function setFees(address recipient) private {
         _taxFee = defaultTaxFee;
         _marketingFee = defaultMarketingFee;
+
         if (recipient == uniswapV2Pair) {
             // sell
             _marketingFee = _marketingFee4Sellers;
@@ -1396,9 +1411,8 @@ contract Cacio is Context, IERC20, Ownable {
         uint256 contractETHBalance = address(this).balance;
         if (contractETHBalance > 0) {
             marketingWallet.transfer(contractETHBalance);
+            swapAndLiquify(amountToLiq);
         }
-
-        swapAndLiquify(amountToLiq);
     }
 
     function swapAndLiquify(uint256 amount) internal {
@@ -1577,11 +1591,23 @@ contract Cacio is Context, IERC20, Ownable {
         numTokensToExchangeForMarketing = _numTokensToExchangeForMarketing;
     }
 
+    function setnumTokensToExchangeForLiquidity(
+        uint256 _numTokensToExchangeForLiquidity
+    ) public onlyOwner {
+        numTokensToExchangeForLiquidity = _numTokensToExchangeForLiquidity;
+    }
+
     function _setMarketingWallet(address payable wallet) external onlyOwner {
         marketingWallet = wallet;
     }
 
     function _setMaxTxAmount(uint256 maxTxAmount) external onlyOwner {
         _maxTxAmount = maxTxAmount;
+    }
+
+    function startTrading() external onlyOwner {
+        require(!tradingEnabled, "Trading is already enabled");
+        tradingEnabled = true;
+        tradingStartTime = block.number;
     }
 }
